@@ -8,7 +8,7 @@
 from dotenv import load_dotenv
 import logging
 import streamlit as st
-import utils
+import app_utils as utils
 from initialize import initialize
 import components as cn
 import constants as ct

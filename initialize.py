@@ -19,7 +19,7 @@ from langchain_community.utilities import SerpAPIWrapper  # ← y なし・残�
 from langchain_core.tools import Tool
 from langchain.agents import AgentType, initialize_agent
 
-import utils
+import app_utils as utils
 import constants as ct
 
 
