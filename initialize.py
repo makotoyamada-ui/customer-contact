@@ -5,6 +5,9 @@
 ############################################################
 # ライブラリの読み込み
 ############################################################
+import os, sys
+sys.path.insert(0, os.path.dirname(__file__))
+
 import os
 import logging
 from logging.handlers import TimedRotatingFileHandler
@@ -20,8 +23,7 @@ from langchain_core.tools import Tool
 from langchain.agents import AgentType, initialize_agent
 
 import app_utils as utils
-import os, sys
-sys.path.insert(0, os.path.dirname(__file__))
+
 import config as ct
 
 

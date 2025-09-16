@@ -5,14 +5,16 @@
 ############################################################
 # ライブラリの読み込み
 ############################################################
+import os, sys
+sys.path.insert(0, os.path.dirname(__file__))
+
 from dotenv import load_dotenv
 import logging
 import streamlit as st
 import app_utils as utils
 from initialize import initialize
 import components as cn
-import os, sys
-sys.path.insert(0, os.path.dirname(__file__))
+
 import config as ct
 
 
