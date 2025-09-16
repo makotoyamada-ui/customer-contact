@@ -7,7 +7,7 @@
 ############################################################
 print("DEBUG: enter app_utils")  # ★起動トレース
 
-import config as ct
+import constants as ct
 print("DEBUG: imported config OK")  # config インポート確認
 
 from langchain_community.document_loaders import PyMuPDFLoader, Docx2txtLoader

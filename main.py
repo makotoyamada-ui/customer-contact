@@ -15,7 +15,7 @@ import app_utils as utils
 from initialize import initialize
 import components as cn
 
-import config as ct
+import constants as ct
 
 
 ############################################################
