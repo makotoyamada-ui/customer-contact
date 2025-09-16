@@ -135,65 +135,66 @@ def initialize_logger():
 
 
 def initialize_agent_executor():
+   def initialize_agent_executor():
     """
     画面読み込み時にAgent Executor（AIエージェント機能の実行を担当するオブジェクト）を作成
     """
-    import importlib, importlib.util, os, pathlib
-    # ★ ここで遅延インポート（通常 → 失敗時はパス指定）
+    # ---- app_utils2 を遅延＆フォールバックで import ----
     try:
-        import app_utils as utils
+        import app_utils2 as utils
     except Exception:
-        mod_path = pathlib.Path(__file__).with_name("app_utils.py")
-        spec = importlib.util.spec_from_file_location("app_utils", mod_path)
+        import importlib.util, pathlib
+        mod_path = pathlib.Path(__file__).with_name("app_utils2.py")
+        spec = importlib.util.spec_from_file_location("app_utils2", mod_path)
         utils = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(utils)
-
 
     logger = logging.getLogger(ct.LOGGER_NAME)
 
     # すでにAgent Executorが作成済みの場合、後続の処理を中断
     if "agent_executor" in st.session_state:
         return
-    
+
     # 消費トークン数カウント用のオブジェクトを用意
     st.session_state.enc = tiktoken.get_encoding(ct.ENCODING_KIND)
-    
-    st.session_state.llm = ChatOpenAI(model=ct.MODEL, temperature=ct.TEMPERATURE, streaming=True)
+
+    st.session_state.llm = ChatOpenAI(
+        model=ct.MODEL,
+        temperature=ct.TEMPERATURE,
+        streaming=True
+    )
 
     # 各Tool用のChainを作成
     st.session_state.customer_doc_chain = utils.create_rag_chain(ct.DB_CUSTOMER_PATH)
-    st.session_state.service_doc_chain = utils.create_rag_chain(ct.DB_SERVICE_PATH)
-    st.session_state.company_doc_chain = utils.create_rag_chain(ct.DB_COMPANY_PATH)
-    st.session_state.rag_chain = utils.create_rag_chain(ct.DB_ALL_PATH)
+    st.session_state.service_doc_chain  = utils.create_rag_chain(ct.DB_SERVICE_PATH)
+    st.session_state.company_doc_chain  = utils.create_rag_chain(ct.DB_COMPANY_PATH)
+    st.session_state.rag_chain          = utils.create_rag_chain(ct.DB_ALL_PATH)
 
     # Web検索用のToolを設定するためのオブジェクトを用意
     search = SerpAPIWrapper()
+
     # Agent Executorに渡すTool一覧を用意
     tools = [
-        # 会社に関するデータ検索用のTool
         Tool(
             name=ct.SEARCH_COMPANY_INFO_TOOL_NAME,
             func=utils.run_company_doc_chain,
             description=ct.SEARCH_COMPANY_INFO_TOOL_DESCRIPTION
         ),
-        # サービスに関するデータ検索用のTool
         Tool(
             name=ct.SEARCH_SERVICE_INFO_TOOL_NAME,
             func=utils.run_service_doc_chain,
             description=ct.SEARCH_SERVICE_INFO_TOOL_DESCRIPTION
         ),
-        # 顧客とのやり取りに関するデータ検索用のTool
         Tool(
             name=ct.SEARCH_CUSTOMER_COMMUNICATION_INFO_TOOL_NAME,
             func=utils.run_customer_doc_chain,
             description=ct.SEARCH_CUSTOMER_COMMUNICATION_INFO_TOOL_DESCRIPTION
         ),
-        # Web検索用のTool
         Tool(
-            name = ct.SEARCH_WEB_INFO_TOOL_NAME,
+            name=ct.SEARCH_WEB_INFO_TOOL_NAME,
             func=search.run,
             description=ct.SEARCH_WEB_INFO_TOOL_DESCRIPTION
-        )
+        ),
     ]
 
     # Agent Executorの作成
@@ -203,5 +204,5 @@ def initialize_agent_executor():
         agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION,
         max_iterations=ct.AI_AGENT_MAX_ITERATIONS,
         early_stopping_method="generate",
-        handle_parsing_errors=True
+        handle_parsing_errors=True,
     )

@@ -13,7 +13,7 @@ import logging
 import streamlit as st
 import constants as ct
 try:
-    import app_utils as utils
+    import app_utils2 as utils
 except Exception:
     import importlib.util, pathlib
     mod_path = pathlib.Path(__file__).with_name("app_utils.py")
