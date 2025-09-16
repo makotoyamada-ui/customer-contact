@@ -117,7 +117,7 @@ def create_rag_chain(db_name: str):
     else:
         db = Chroma.from_documents(splitted_docs, embedding=embeddings, persist_directory=persist_dir)
 
-    # retriever は必ず作る（以前の分岐漏れを修正）
+    # retriever は必ず作る
     retriever = db.as_retriever(search_kwargs={"k": ct.TOP_K})
 
     # プロンプト
@@ -156,6 +156,8 @@ def add_docs(folder_path: str, docs_all: list):
         return
 
     for file in os.listdir(folder_path):
+        if file.startswith("."):
+            continue
         ext = os.path.splitext(file)[1]
         if ext in ct.SUPPORTED_EXTENSIONS:
             loader = ct.SUPPORTED_EXTENSIONS[ext](os.path.join(folder_path, file))
@@ -201,16 +203,29 @@ def run_customer_doc_chain(param: str) -> str:
 def delete_old_conversation_log(result: str) -> None:
     """古い会話履歴の削除（トークン上限管理）"""
     ct = _load_constants()
+    enc = st.session_state.get("enc")
 
-    response_tokens = len(st.session_state.enc.encode(result))
+    # 応答トークン加算
+    if enc is not None:
+        response_tokens = len(enc.encode(result))
+    else:
+        response_tokens = max(1, len(str(result)) // 2)
+        
     st.session_state.total_tokens += response_tokens
 
+    # 上限超過なら古いメッセージから削除
     while (
         st.session_state.total_tokens > ct.MAX_ALLOWED_TOKENS
         and len(st.session_state.chat_history) > 1
     ):
         removed_message = st.session_state.chat_history.pop(1)
-        removed_tokens = len(st.session_state.enc.encode(removed_message.content))
+        if enc is not None:
+            try:
+                removed_tokens = len(enc.encode(removed_message.content))
+            except Exception:
+                removed_tokens = max(1, len(removed_message.content) // 2)
+        else:
+            removed_tokens = max(1, len(removed_message.content) // 2)
         st.session_state.total_tokens -= removed_tokens
 
 
