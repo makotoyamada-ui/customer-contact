@@ -20,7 +20,7 @@ from langchain_core.tools import Tool
 from langchain.agents import AgentType, initialize_agent
 
 import app_utils as utils
-import constants as ct
+import config as ct
 
 
 

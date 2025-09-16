@@ -11,7 +11,7 @@ import streamlit as st
 import app_utils as utils
 from initialize import initialize
 import components as cn
-import constants as ct
+import config as ct
 
 
 ############################################################

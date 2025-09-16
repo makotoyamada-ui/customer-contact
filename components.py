@@ -7,7 +7,7 @@
 ############################################################
 import logging
 import streamlit as st
-import constants as ct
+import config as ct
 
 
 ############################################################

@@ -32,7 +32,7 @@ from langchain.agents import AgentType, initialize_agent
 from sudachipy import tokenizer, dictionary
 from docx import Document
 
-import constants as ct
+import config as ct
 
 ############################################################
 # 設定関連
