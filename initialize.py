@@ -81,24 +81,39 @@ def initialize_session_id():
 
 def initialize_logger():
     """
-    ログ出力の設定
+    ログ出力の設定（/mount/data が書けない環境でも落ちないようにフォールバック）
     """
-    import errno
-
-    log_dir = ct.LOG_DIR_PATH
-
-    try:
-        os.makedirs(log_dir, exist_ok=True)
-    except PermissionError:
-        # 権限エラーなら /tmp/logs にフォールバック
-        log_dir = "/tmp/logs"
-        os.makedirs(log_dir, exist_ok=True)
-
     logger = logging.getLogger(ct.LOGGER_NAME)
-
     if logger.hasHandlers():
         return
 
+    # 1) /mount/data が書き込めるか先にチェック（親を作ろうとしない）
+    base_dir_candidates = []
+    # constants の指定を最優先（ただし /mount/data/logs だと親に触る可能性があるので事前判定）
+    base_dir = "/mount/data"
+    try:
+        if os.path.exists(base_dir) and os.access(base_dir, os.W_OK | os.X_OK):
+            base_dir_candidates.append(base_dir)
+    except Exception:
+        pass  # 判定に失敗したら候補に入れない
+
+    # 2) フォールバック先
+    base_dir_candidates.append("/tmp")
+
+    # 3) 使えるベースを選び、logs サブディレクトリを作成
+    for base in base_dir_candidates:
+        try:
+            log_dir = os.path.join(base, "logs")
+            os.makedirs(log_dir, exist_ok=True)  # base が書ける場所だけ試す
+            break
+        except PermissionError:
+            continue
+    else:
+        # どこも作れない場合は最後の手段として現在ディレクトリ配下に出す
+        log_dir = "./logs"
+        os.makedirs(log_dir, exist_ok=True)
+
+    # 4) ハンドラ設定
     log_path = os.path.join(log_dir, ct.LOG_FILE)
     log_handler = TimedRotatingFileHandler(
         log_path,
@@ -106,11 +121,16 @@ def initialize_logger():
         encoding="utf8"
     )
     formatter = logging.Formatter(
-        f"[%(levelname)s] %(asctime)s line %(lineno)s, in %(funcName)s, session_id={st.session_state.get('session_id', 'N/A')}: %(message)s"
+        f"[%(levelname)s] %(asctime)s line %(lineno)s, in %(funcName)s, "
+        f"session_id={st.session_state.get('session_id', 'N/A')}: %(message)s"
     )
     log_handler.setFormatter(formatter)
     logger.setLevel(logging.INFO)
     logger.addHandler(log_handler)
+
+    # 5) どこに出しているかを最初に記録しておくと後で便利
+    logger.info(f"Logging to: {log_path}")
+
 
 
 
