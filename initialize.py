@@ -12,17 +12,16 @@ from uuid import uuid4
 from dotenv import load_dotenv
 import streamlit as st
 import tiktoken
+import importlib.util
+import pathlib
 
 from langchain_openai import ChatOpenAI
-from langchain_community.callbacks.streamlit import StreamlitCallbackHandler
+# 未使用なら削ってOK： from langchain_community.callbacks.streamlit import StreamlitCallbackHandler
 from langchain_community.utilities import SerpAPIWrapper  # ← y なし・残す（使ってます）
 from langchain_core.tools import Tool
 from langchain.agents import AgentType, initialize_agent
 
-
 import constants as ct
-
-
 
 
 ############################################################
@@ -47,6 +46,8 @@ def initialize():
     initialize_logger()
     # Agent Executorを作成
     initialize_agent_executor()
+    # 念のためトークナイザを最終保証
+    _ensure_enc()
 
 
 def initialize_session_state():
@@ -59,16 +60,15 @@ def initialize_session_state():
         # 会話履歴の合計トークン数を加算する用の変数
         st.session_state.total_tokens = 0
 
-        # フィードバックボタンで「はい」を押下した後にThanksメッセージを表示するためのフラグ
+        # フィードバック関連のフラグ群
         st.session_state.feedback_yes_flg = False
-        # フィードバックボタンで「いいえ」を押下した後に入力エリアを表示するためのフラグ
         st.session_state.feedback_no_flg = False
-        # LLMによる回答生成後、フィードバックボタンを表示するためのフラグ
         st.session_state.answer_flg = False
-        # フィードバックボタンで「いいえ」を押下後、フィードバックを送信するための入力エリアからの入力を受け付ける変数
         st.session_state.dissatisfied_reason = ""
-        # フィードバック送信後にThanksメッセージを表示するためのフラグ
         st.session_state.feedback_no_reason_send_flg = False
+
+        # 追加：トークナイザの初期値（None で明示）
+        st.session_state.enc = None
 
 
 def initialize_session_id():
@@ -89,7 +89,6 @@ def initialize_logger():
 
     # 1) /mount/data が書き込めるか先にチェック（親を作ろうとしない）
     base_dir_candidates = []
-    # constants の指定を最優先（ただし /mount/data/logs だと親に触る可能性があるので事前判定）
     base_dir = "/mount/data"
     try:
         if os.path.exists(base_dir) and os.access(base_dir, os.W_OK | os.X_OK):
@@ -104,7 +103,7 @@ def initialize_logger():
     for base in base_dir_candidates:
         try:
             log_dir = os.path.join(base, "logs")
-            os.makedirs(log_dir, exist_ok=True)  # base が書ける場所だけ試す
+            os.makedirs(log_dir, exist_ok=True)
             break
         except PermissionError:
             continue
@@ -128,52 +127,84 @@ def initialize_logger():
     logger.setLevel(logging.INFO)
     logger.addHandler(log_handler)
 
-    # 5) どこに出しているかを最初に記録しておくと後で便利
+    # 5) どこに出しているかを最初に記録
     logger.info(f"Logging to: {log_path}")
 
 
+def _ensure_enc():
+    """
+    st.session_state.enc を必ず用意するユーティリティ
+    """
+    if st.session_state.get("enc") is None:
+        try:
+            # 推奨：ENCODING_KIND（例: "cl100k_base"）を優先
+            st.session_state.enc = tiktoken.get_encoding(ct.ENCODING_KIND)
+        except Exception:
+            # フォールバック：モデル名から推定
+            model_name = getattr(ct, "MODEL", "gpt-4o-mini")
+            try:
+                st.session_state.enc = tiktoken.encoding_for_model(model_name)
+            except Exception:
+                # 最悪の保険：None（呼び出し側でガード）
+                st.session_state.enc = None
+
+
+def _import_utils():
+    """
+    app_utils2 → app_utils → （最後の保険として）app_utils.py をパス指定で読み込み
+    """
+    try:
+        import app_utils2 as utils
+        return utils
+    except Exception:
+        pass
+
+    try:
+        import app_utils2 as utils
+        return utils
+    except Exception:
+        pass
+
+    # 最後の保険：app_utils.py をファイルパスから読み込む
+    mod_path = pathlib.Path(__file__).with_name("app_utils.py")
+    spec = importlib.util.spec_from_file_location("app_utils", mod_path)
+    utils = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(utils)
+    return utils
 
 
 def initialize_agent_executor():
-   def initialize_agent_executor():
     """
     画面読み込み時にAgent Executor（AIエージェント機能の実行を担当するオブジェクト）を作成
     """
-    # ---- app_utils2 を遅延＆フォールバックで import ----
-    try:
-        import app_utils2 as utils
-    except Exception:
-        import importlib.util, pathlib
-        mod_path = pathlib.Path(__file__).with_name("app_utils2.py")
-        spec = importlib.util.spec_from_file_location("app_utils2", mod_path)
-        utils = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(utils)
-
+    utils = _import_utils()
     logger = logging.getLogger(ct.LOGGER_NAME)
 
-    # すでにAgent Executorが作成済みの場合、後続の処理を中断
+    # すでにAgent Executorが作成済みの場合でも enc が無ければ保証してから return
     if "agent_executor" in st.session_state:
+        _ensure_enc()
         return
 
-    # 消費トークン数カウント用のオブジェクトを用意
-    st.session_state.enc = tiktoken.get_encoding(ct.ENCODING_KIND)
+    # まずトークナイザを保証
+    _ensure_enc()
 
+    # LLM 構築
     st.session_state.llm = ChatOpenAI(
         model=ct.MODEL,
         temperature=ct.TEMPERATURE,
         streaming=True
     )
 
-    # 各Tool用のChainを作成
+    # 各Tool用のChainを作成（create_rag_chain 内で st.session_state.llm を参照）
     st.session_state.customer_doc_chain = utils.create_rag_chain(ct.DB_CUSTOMER_PATH)
     st.session_state.service_doc_chain  = utils.create_rag_chain(ct.DB_SERVICE_PATH)
     st.session_state.company_doc_chain  = utils.create_rag_chain(ct.DB_COMPANY_PATH)
     st.session_state.rag_chain          = utils.create_rag_chain(ct.DB_ALL_PATH)
 
-    # Web検索用のToolを設定するためのオブジェクトを用意
+    # Web検索用のTool
     search = SerpAPIWrapper()
 
-    # Agent Executorに渡すTool一覧を用意
+    # Agent Executorに渡すTool一覧
     tools = [
         Tool(
             name=ct.SEARCH_COMPANY_INFO_TOOL_NAME,

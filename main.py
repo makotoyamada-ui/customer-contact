@@ -11,29 +11,40 @@ sys.path.insert(0, os.path.dirname(__file__))
 from dotenv import load_dotenv
 import logging
 import streamlit as st
+import importlib.util
+import pathlib
+
 import constants as ct
-try:
-    import app_utils2 as utils
-except Exception:
-    import importlib.util, pathlib
+
+# utils のフォールバック読込（app_utils2 → app_utils → 最後にパス指定）
+def _import_utils():
+    try:
+        import app_utils2 as utils
+        return utils
+    except Exception:
+        pass
+    try:
+        import app_utils2 as utils
+        return utils
+    except Exception:
+        pass
+    # 最後の保険：app_utils.py をファイルパスから読み込む
     mod_path = pathlib.Path(__file__).with_name("app_utils.py")
     spec = importlib.util.spec_from_file_location("app_utils", mod_path)
     utils = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(utils)
+    return utils
+
+utils = _import_utils()
 
 from initialize import initialize
 import components as cn
 
 
-
-
 ############################################################
 # 設定関連
 ############################################################
-st.set_page_config(
-    page_title=ct.APP_NAME
-)
-
+st.set_page_config(page_title=ct.APP_NAME)
 load_dotenv()
 
 logger = logging.getLogger(ct.LOGGER_NAME)
@@ -50,7 +61,7 @@ except Exception as e:
     st.stop()
 
 # アプリ起動時のログ出力
-if not "initialized" in st.session_state:
+if "initialized" not in st.session_state:
     st.session_state.initialized = True
     logger.info(ct.APP_BOOT_MESSAGE)
 
@@ -99,13 +110,29 @@ if chat_message:
     # ==========================================
     # 会話履歴の上限を超えた場合、受け付けない
     # ==========================================
-    # ユーザーメッセージのトークン数を取得
-    input_tokens = len(st.session_state.enc.encode(chat_message))
+    # トークナイザ保険（初期化ずれ/環境差異に備える）
+    if st.session_state.get("enc") is None:
+        try:
+            import tiktoken
+            # constants の MODEL を優先して推定
+            model_name = getattr(ct, "MODEL", "gpt-4o-mini")
+            st.session_state.enc = tiktoken.encoding_for_model(model_name)
+        except Exception:
+            st.session_state.enc = None
+
+    enc = st.session_state.get("enc")
+    if enc is not None:
+        input_tokens = len(enc.encode(chat_message))
+    else:
+        # 簡易見積り（フォールバック）
+        input_tokens = max(1, len(chat_message) // 2)
+
     # トークン数が、受付上限を超えている場合にエラーメッセージを表示
     if input_tokens > ct.MAX_ALLOWED_TOKENS:
         with st.chat_message("assistant", avatar=ct.AI_ICON_FILE_PATH):
             st.error(ct.INPUT_TEXT_LIMIT_ERROR_MESSAGE)
             st.stop()
+
     # トークン数が受付上限を超えていない場合、会話ログ全体のトークン数に加算
     st.session_state.total_tokens += input_tokens
 
@@ -114,14 +141,12 @@ if chat_message:
     # ==========================================
     logger.info({"message": chat_message})
 
-    res_box = st.empty()
     with st.chat_message("user", avatar=ct.USER_ICON_FILE_PATH):
         st.markdown(chat_message)
-    
+
     # ==========================================
     # 2. LLMからの回答取得 or 問い合わせ処理
     # ==========================================
-    res_box = st.empty()
     try:
         if st.session_state.contact_mode == ct.CONTACT_MODE_OFF:
             with st.spinner(ct.SPINNER_TEXT):
@@ -133,11 +158,15 @@ if chat_message:
         logger.error(f"{ct.MAIN_PROCESS_ERROR_MESSAGE}\n{e}")
         st.error(utils.build_error_message(ct.MAIN_PROCESS_ERROR_MESSAGE), icon=ct.ERROR_ICON)
         st.stop()
-    
+
     # ==========================================
     # 3. 古い会話履歴を削除
     # ==========================================
-    utils.delete_old_conversation_log(result)
+    try:
+        utils.delete_old_conversation_log(result)
+    except Exception as e:
+        # トークン削減に失敗しても致命傷にはしない（ログのみ）
+        logger.error(f"delete_old_conversation_log failed: {e}")
 
     # ==========================================
     # 4. LLMからの回答表示
@@ -145,13 +174,12 @@ if chat_message:
     with st.chat_message("assistant", avatar=ct.AI_ICON_FILE_PATH):
         try:
             cn.display_llm_response(result)
-
             logger.info({"message": result})
         except Exception as e:
             logger.error(f"{ct.DISP_ANSWER_ERROR_MESSAGE}\n{e}")
             st.error(utils.build_error_message(ct.DISP_ANSWER_ERROR_MESSAGE), icon=ct.ERROR_ICON)
             st.stop()
-    
+
     # ==========================================
     # 5. 会話ログへの追加
     # ==========================================
@@ -162,5 +190,5 @@ if chat_message:
 ############################################################
 # 6. ユーザーフィードバックのボタン表示
 ############################################################
-if st.session_state.contact_mode == ct.CONTACT_MODE_OFF:
+if st.session_state.get("contact_mode") == ct.CONTACT_MODE_OFF:
     cn.display_feedback_button()
