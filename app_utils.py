@@ -32,6 +32,8 @@ from langchain.agents import AgentType, initialize_agent
 from sudachipy import tokenizer, dictionary
 from docx import Document
 
+import os, sys
+sys.path.insert(0, os.path.dirname(__file__))
 import config as ct
 
 ############################################################
