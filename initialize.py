@@ -147,7 +147,7 @@ def initialize_agent_executor():
     # 消費トークン数カウント用のオブジェクトを用意
     st.session_state.enc = tiktoken.get_encoding(ct.ENCODING_KIND)
     
-    st.session_state.llm = ChatOpenAI(model_name=ct.MODEL, temperature=ct.TEMPERATURE, streaming=True)
+    st.session_state.llm = ChatOpenAI(model=ct.MODEL, temperature=ct.TEMPERATURE, streaming=True)
 
     # 各Tool用のChainを作成
     st.session_state.customer_doc_chain = utils.create_rag_chain(ct.DB_CUSTOMER_PATH)
