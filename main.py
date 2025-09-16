@@ -11,11 +11,20 @@ sys.path.insert(0, os.path.dirname(__file__))
 from dotenv import load_dotenv
 import logging
 import streamlit as st
-import app_utils as utils
+import constants as ct
+try:
+    import app_utils as utils
+except Exception:
+    import importlib.util, pathlib
+    mod_path = pathlib.Path(__file__).with_name("app_utils.py")
+    spec = importlib.util.spec_from_file_location("app_utils", mod_path)
+    utils = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(utils)
+
 from initialize import initialize
 import components as cn
 
-import constants as ct
+
 
 
 ############################################################

@@ -19,7 +19,6 @@ from langchain_community.utilities import SerpAPIWrapper  # ← y なし・残�
 from langchain_core.tools import Tool
 from langchain.agents import AgentType, initialize_agent
 
-import app_utils as utils
 
 import constants as ct
 
@@ -139,6 +138,17 @@ def initialize_agent_executor():
     """
     画面読み込み時にAgent Executor（AIエージェント機能の実行を担当するオブジェクト）を作成
     """
+    import importlib, importlib.util, os, pathlib
+    # ★ ここで遅延インポート（通常 → 失敗時はパス指定）
+    try:
+        import app_utils as utils
+    except Exception:
+        mod_path = pathlib.Path(__file__).with_name("app_utils.py")
+        spec = importlib.util.spec_from_file_location("app_utils", mod_path)
+        utils = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(utils)
+
+
     logger = logging.getLogger(ct.LOGGER_NAME)
 
     # すでにAgent Executorが作成済みの場合、後続の処理を中断
