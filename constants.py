@@ -51,7 +51,7 @@ FEEDBACK_THANKS_MESSAGE = "ご回答いただき誠にありがとうござい�
 # ==========================================
 # ログ出力系
 # ==========================================
-LOG_DIR_PATH = "/mount/data/logs"
+LOG_DIR_PATH = "/tmp/logs" 
 LOGGER_NAME = "ApplicationLog"
 LOG_FILE = "application.log"
 
