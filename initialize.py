@@ -83,24 +83,35 @@ def initialize_logger():
     """
     ログ出力の設定
     """
-    os.makedirs(ct.LOG_DIR_PATH, exist_ok=True)
+    import errno
+
+    log_dir = ct.LOG_DIR_PATH
+
+    try:
+        os.makedirs(log_dir, exist_ok=True)
+    except PermissionError:
+        # 権限エラーなら /tmp/logs にフォールバック
+        log_dir = "/tmp/logs"
+        os.makedirs(log_dir, exist_ok=True)
 
     logger = logging.getLogger(ct.LOGGER_NAME)
 
     if logger.hasHandlers():
         return
 
+    log_path = os.path.join(log_dir, ct.LOG_FILE)
     log_handler = TimedRotatingFileHandler(
-        os.path.join(ct.LOG_DIR_PATH, ct.LOG_FILE),
+        log_path,
         when="D",
         encoding="utf8"
     )
     formatter = logging.Formatter(
-        f"[%(levelname)s] %(asctime)s line %(lineno)s, in %(funcName)s, session_id={st.session_state.session_id}: %(message)s"
+        f"[%(levelname)s] %(asctime)s line %(lineno)s, in %(funcName)s, session_id={st.session_state.get('session_id', 'N/A')}: %(message)s"
     )
     log_handler.setFormatter(formatter)
     logger.setLevel(logging.INFO)
     logger.addHandler(log_handler)
+
 
 
 def initialize_agent_executor():
