@@ -111,20 +111,13 @@ if chat_message:
     # 会話履歴の上限を超えた場合、受け付けない
     # ==========================================
     # トークナイザ保険（初期化ずれ/環境差異に備える）
-    if st.session_state.get("enc") is None:
-        try:
-            import tiktoken
-            # constants の MODEL を優先して推定
-            model_name = getattr(ct, "MODEL", "gpt-4o-mini")
-            st.session_state.enc = tiktoken.encoding_for_model(model_name)
-        except Exception:
-            st.session_state.enc = None
-
-    enc = st.session_state.get("enc")
-    if enc is not None:
+    try:
+        import tiktoken
+        model_name = getattr(ct, "MODEL", "gpt-4o-mini")
+        enc = tiktoken.encoding_for_model(model_name)
         input_tokens = len(enc.encode(chat_message))
-    else:
-        # 簡易見積り（フォールバック）
+    except Exception:
+        # tiktoken使用不可の場合は簡易計算
         input_tokens = max(1, len(chat_message) // 2)
 
     # トークン数が、受付上限を超えている場合にエラーメッセージを表示
