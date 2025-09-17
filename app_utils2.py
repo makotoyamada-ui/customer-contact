@@ -261,84 +261,95 @@ def execute_agent_or_chain(chat_message: str) -> str:
 def notice_slack(chat_message: str) -> str:
     """問い合わせ内容のSlackへの通知"""
     ct = _load_constants()
+    
+    # SLACK_USER_TOKEN を SLACK_BOT_TOKEN として設定
+    user_token = os.getenv("SLACK_USER_TOKEN")
+    if user_token:
+        os.environ["SLACK_BOT_TOKEN"] = user_token
+    
+    try:
+        toolkit = SlackToolkit()
+        tools = toolkit.get_tools()
+        agent_executor = initialize_agent(
+            llm=st.session_state.llm,
+            tools=tools,
+            agent=AgentType.STRUCTURED_CHAT_ZERO_SHOT_REACT_DESCRIPTION,
+        )
 
-    toolkit = SlackToolkit()
-    tools = toolkit.get_tools()
-    agent_executor = initialize_agent(
-        llm=st.session_state.llm,
-        tools=tools,
-        agent=AgentType.STRUCTURED_CHAT_ZERO_SHOT_REACT_DESCRIPTION,
-    )
+        # 従業員情報 / 問い合わせ履歴の読み込み
+        loader = CSVLoader(ct.EMPLOYEE_FILE_PATH, encoding=ct.CSV_ENCODING)
+        docs = loader.load()
+        loader = CSVLoader(ct.INQUIRY_HISTORY_FILE_PATH, encoding=ct.CSV_ENCODING)
+        docs_history = loader.load()
 
-    # 従業員情報 / 問い合わせ履歴の読み込み
-    loader = CSVLoader(ct.EMPLOYEE_FILE_PATH, encoding=ct.CSV_ENCODING)
-    docs = loader.load()
-    loader = CSVLoader(ct.INQUIRY_HISTORY_FILE_PATH, encoding=ct.CSV_ENCODING)
-    docs_history = loader.load()
+        # 文字列調整
+        for doc in docs:
+            doc.page_content = adjust_string(doc.page_content)
+            for key in list(doc.metadata.keys()):
+                doc.metadata[key] = adjust_string(doc.metadata[key])
+        for doc in docs_history:
+            doc.page_content = adjust_string(doc.page_content)
+            for key in list(doc.metadata.keys()):
+                doc.metadata[key] = adjust_string(doc.metadata[key])
 
-    # 文字列調整
-    for doc in docs:
-        doc.page_content = adjust_string(doc.page_content)
-        for key in list(doc.metadata.keys()):
-            doc.metadata[key] = adjust_string(doc.metadata[key])
-    for doc in docs_history:
-        doc.page_content = adjust_string(doc.page_content)
-        for key in list(doc.metadata.keys()):
-            doc.metadata[key] = adjust_string(doc.metadata[key])
+        # データ整形
+        docs_all = adjust_reference_data(docs, docs_history)
+        docs_all_page_contents = [doc.page_content for doc in docs_all]
 
-    # データ整形
-    docs_all = adjust_reference_data(docs, docs_history)
-    docs_all_page_contents = [doc.page_content for doc in docs_all]
+        # Retriever 構築（Ensemble: BM25 + embeddings）
+        embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+        db = Chroma.from_documents(docs_all, embedding=embeddings)
+        retriever_dense = db.as_retriever(search_kwargs={"k": ct.TOP_K})
+        retriever_bm25 = BM25Retriever.from_texts(
+            docs_all_page_contents, preprocess_func=preprocess_func, k=ct.TOP_K
+        )
+        retriever = EnsembleRetriever(
+            retrievers=[retriever_bm25, retriever_dense],
+            weights=ct.RETRIEVER_WEIGHTS,
+        )
 
-    # Retriever 構築（Ensemble: BM25 + embeddings）
-    embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
-    db = Chroma.from_documents(docs_all, embedding=embeddings)
-    retriever_dense = db.as_retriever(search_kwargs={"k": ct.TOP_K})
-    retriever_bm25 = BM25Retriever.from_texts(
-        docs_all_page_contents, preprocess_func=preprocess_func, k=ct.TOP_K
-    )
-    retriever = EnsembleRetriever(
-        retrievers=[retriever_bm25, retriever_dense],
-        weights=ct.RETRIEVER_WEIGHTS,
-    )
+        employees = retriever.invoke(chat_message)
 
-    employees = retriever.invoke(chat_message)
+        # プロンプト作成
+        context = get_context(employees)
+        prompt_template = ChatPromptTemplate.from_messages(
+            [("system", ct.SYSTEM_PROMPT_EMPLOYEE_SELECTION)]
+        )
+        output_parser = CommaSeparatedListOutputParser()
+        format_instruction = output_parser.get_format_instructions()
 
-    # プロンプト作成
-    context = get_context(employees)
-    prompt_template = ChatPromptTemplate.from_messages(
-        [("system", ct.SYSTEM_PROMPT_EMPLOYEE_SELECTION)]
-    )
-    output_parser = CommaSeparatedListOutputParser()
-    format_instruction = output_parser.get_format_instructions()
+        messages = prompt_template.format_prompt(
+            context=context, query=chat_message, format_instruction=format_instruction
+        ).to_messages()
 
-    messages = prompt_template.format_prompt(
-        context=context, query=chat_message, format_instruction=format_instruction
-    ).to_messages()
+        employee_id_response = st.session_state.llm(messages)
+        employee_ids = output_parser.parse(employee_id_response.content)
 
-    employee_id_response = st.session_state.llm(messages)
-    employee_ids = output_parser.parse(employee_id_response.content)
+        target_employees = get_target_employees(employees, employee_ids)
+        slack_ids = get_slack_ids(target_employees)
+        slack_id_text = create_slack_id_text(slack_ids)
 
-    target_employees = get_target_employees(employees, employee_ids)
-    slack_ids = get_slack_ids(target_employees)
-    slack_id_text = create_slack_id_text(slack_ids)
+        context = get_context(target_employees)
+        now_datetime = get_datetime()
 
-    context = get_context(target_employees)
-    now_datetime = get_datetime()
+        prompt = PromptTemplate(
+            input_variables=["slack_id_text", "query", "context", "now_datetime"],
+            template=ct.SYSTEM_PROMPT_NOTICE_SLACK,
+        )
+        prompt_message = prompt.format(
+            slack_id_text=slack_id_text,
+            query=chat_message,
+            context=context,
+            now_datetime=now_datetime,
+        )
 
-    prompt = PromptTemplate(
-        input_variables=["slack_id_text", "query", "context", "now_datetime"],
-        template=ct.SYSTEM_PROMPT_NOTICE_SLACK,
-    )
-    prompt_message = prompt.format(
-        slack_id_text=slack_id_text,
-        query=chat_message,
-        context=context,
-        now_datetime=now_datetime,
-    )
-
-    agent_executor.invoke({"input": prompt_message})
-    return ct.CONTACT_THANKS_MESSAGE
+        agent_executor.invoke({"input": prompt_message})
+        return ct.CONTACT_THANKS_MESSAGE
+        
+    except Exception as e:
+        logger = logging.getLogger(ct.LOGGER_NAME)
+        logger.error(f"Slack notification failed: {e}")
+        return "Slack通知でエラーが発生しました。設定を確認してください。"
 
 
 def adjust_reference_data(docs, docs_history):
