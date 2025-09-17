@@ -207,7 +207,10 @@ def delete_old_conversation_log(result: str) -> None:
 
     # 応答トークン加算
     if enc is not None:
-        response_tokens = len(enc.encode(result))
+        try:
+            response_tokens = len(enc.encode(str(result)))
+        except Exception:
+            response_tokens = max(1, len(str(result)) // 2)
     else:
         response_tokens = max(1, len(str(result)) // 2)
         
@@ -221,11 +224,11 @@ def delete_old_conversation_log(result: str) -> None:
         removed_message = st.session_state.chat_history.pop(1)
         if enc is not None:
             try:
-                removed_tokens = len(enc.encode(removed_message.content))
+                removed_tokens = len(enc.encode(str(removed_message.content)))
             except Exception:
-                removed_tokens = max(1, len(removed_message.content) // 2)
+                removed_tokens = max(1, len(str(removed_message.content)) // 2)
         else:
-            removed_tokens = max(1, len(removed_message.content) // 2)
+            removed_tokens = max(1, len(str(removed_message.content)) // 2)
         st.session_state.total_tokens -= removed_tokens
 
 
