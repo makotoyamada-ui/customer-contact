@@ -1,15 +1,15 @@
 """
 このファイルは、最初の画面読み込み時にのみ実行される初期化処理が記述されたファイルです。
 """
-# --- SQLite を pysqlite3 に差し替え（Chromadb が sqlite3 を使う前に実行）---
+# --- SQLite を pysqlite3 に差し替え（Chroma を使う前に必ず走らせる）---
 try:
     import sys
-    import pysqlite3 as sqlite3  # wheels 同梱の新しい SQLite
+    import pysqlite3 as sqlite3  # type: ignore  # noqa: F401
     sys.modules["sqlite3"] = sqlite3
 except Exception:
-    # 失敗してもアプリを止めない（packages.txt で OS 側を上げる構成に切替可能）
     pass
-# --------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+
 
 ############################################################
 # ライブラリの読み込み
