@@ -1,15 +1,6 @@
 """
 このファイルは、最初の画面読み込み時にのみ実行される初期化処理が記述されたファイルです。
 """
-# --- SQLite を pysqlite3 に差し替え（Chroma を使う前に必ず走らせる）---
-try:
-    import sys
-    import pysqlite3 as sqlite3  # type: ignore  # noqa: F401
-    sys.modules["sqlite3"] = sqlite3
-except Exception:
-    pass
-# ---------------------------------------------------------------------------
-
 
 ############################################################
 # ライブラリの読み込み
@@ -25,19 +16,36 @@ import importlib.util
 import pathlib
 
 from langchain_openai import ChatOpenAI
-# 未使用なら削ってOK： from langchain_community.callbacks.streamlit import StreamlitCallbackHandler
-from langchain_community.utilities import SerpAPIWrapper  # ← y なし・残す（使ってます）
+from langchain_community.utilities import SerpAPIWrapper
 from langchain_core.tools import Tool
 from langchain.agents import AgentType, initialize_agent
 
 import constants as ct
 
-
 ############################################################
 # 設定関連
 ############################################################
-load_dotenv()
+load_dotenv()  # 互換のため残す（ただし Secrets を優先）
 
+def _get_secret(name: str) -> str | None:
+    """Secrets > 環境変数 の優先で値を取得"""
+    try:
+        v = st.secrets.get(name)  # type: ignore[attr-defined]
+    except Exception:
+        v = None
+    return v or os.getenv(name)
+
+# --- OpenAI のキーは必ず明示して使う ---
+OPENAI_API_KEY = _get_secret("OPENAI_API_KEY")
+if not OPENAI_API_KEY:
+    raise RuntimeError(
+        "OPENAI_API_KEY is not設定されていません。Streamlit の Secrets か環境変数に設定してください。"
+    )
+
+# org / project の強制上書きは事故の元なので消しておく（任意）
+for var in ("OPENAI_ORG_ID", "OPENAI_ORGANIZATION", "OPENAI_PROJECT", "OPENAI_PROJECT_ID"):
+    if os.getenv(var):
+        del os.environ[var]
 
 ############################################################
 # 関数定義
@@ -47,16 +55,10 @@ def initialize():
     """
     画面読み込み時に実行する初期化処理
     """
-    # 初期化データの用意
     initialize_session_state()
-    # ログ出力用にセッションIDを生成
     initialize_session_id()
-    # ログ出力の設定
     initialize_logger()
-    # Agent Executorを作成
     initialize_agent_executor()
-    # 念のためトークナイザを最終保証
-    _ensure_enc()
 
 
 def initialize_session_state():
@@ -69,15 +71,12 @@ def initialize_session_state():
         # 会話履歴の合計トークン数を加算する用の変数
         st.session_state.total_tokens = 0
 
-        # フィードバック関連のフラグ群
+        # フィードバック関連
         st.session_state.feedback_yes_flg = False
         st.session_state.feedback_no_flg = False
         st.session_state.answer_flg = False
         st.session_state.dissatisfied_reason = ""
         st.session_state.feedback_no_reason_send_flg = False
-
-        # 追加：トークナイザの初期値（None で明示）
-        st.session_state.enc = None
 
 
 def initialize_session_id():
@@ -96,19 +95,15 @@ def initialize_logger():
     if logger.hasHandlers():
         return
 
-    # 1) /mount/data が書き込めるか先にチェック（親を作ろうとしない）
     base_dir_candidates = []
     base_dir = "/mount/data"
     try:
         if os.path.exists(base_dir) and os.access(base_dir, os.W_OK | os.X_OK):
             base_dir_candidates.append(base_dir)
     except Exception:
-        pass  # 判定に失敗したら候補に入れない
-
-    # 2) フォールバック先
+        pass
     base_dir_candidates.append("/tmp")
 
-    # 3) 使えるベースを選び、logs サブディレクトリを作成
     for base in base_dir_candidates:
         try:
             log_dir = os.path.join(base, "logs")
@@ -117,17 +112,11 @@ def initialize_logger():
         except PermissionError:
             continue
     else:
-        # どこも作れない場合は最後の手段として現在ディレクトリ配下に出す
         log_dir = "./logs"
         os.makedirs(log_dir, exist_ok=True)
 
-    # 4) ハンドラ設定
     log_path = os.path.join(log_dir, ct.LOG_FILE)
-    log_handler = TimedRotatingFileHandler(
-        log_path,
-        when="D",
-        encoding="utf8"
-    )
+    log_handler = TimedRotatingFileHandler(log_path, when="D", encoding="utf8")
     formatter = logging.Formatter(
         f"[%(levelname)s] %(asctime)s line %(lineno)s, in %(funcName)s, "
         f"session_id={st.session_state.get('session_id', 'N/A')}: %(message)s"
@@ -135,76 +124,46 @@ def initialize_logger():
     log_handler.setFormatter(formatter)
     logger.setLevel(logging.INFO)
     logger.addHandler(log_handler)
-
-    # 5) どこに出しているかを最初に記録
     logger.info(f"Logging to: {log_path}")
-
-
-def _ensure_enc():
-    """
-    st.session_state.enc を必ず用意するユーティリティ
-    """
-    if st.session_state.get("enc") is None:
-        try:
-            # 推奨：ENCODING_KIND（例: "cl100k_base"）を優先
-            st.session_state.enc = tiktoken.get_encoding(ct.ENCODING_KIND)
-        except Exception:
-            # フォールバック：モデル名から推定
-            model_name = getattr(ct, "MODEL", "gpt-4o-mini")
-            try:
-                st.session_state.enc = tiktoken.encoding_for_model(model_name)
-            except Exception:
-                # 最悪の保険：None（呼び出し側でガード）
-                st.session_state.enc = None
-
-
-def _import_utils():
-    """
-    app_utils2 → app_utils → （最後の保険として）app_utils.py をパス指定で読み込み
-    """
-    try:
-        import app_utils2 as utils
-        return utils
-    except Exception:
-        pass
-
-    try:
-        import app_utils2 as utils
-        return utils
-    except Exception:
-        pass
-
-    # 最後の保険：app_utils.py をファイルパスから読み込む
-    mod_path = pathlib.Path(__file__).with_name("app_utils.py")
-    spec = importlib.util.spec_from_file_location("app_utils", mod_path)
-    utils = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(utils)
-    return utils
 
 
 def initialize_agent_executor():
     """
-    画面読み込み時にAgent Executor（AIエージェント機能の実行を担当するオブジェクト）を作成
+    画面読み込み時にAgent Executor（AIエージェント機能の実行を担当）を作成
     """
-    utils = _import_utils()
+    # ---- app_utils2 を遅延＆フォールバックで import ----
+    try:
+        import app_utils2 as utils  # もし存在すればこちらを使う
+    except Exception:
+        mod_path = pathlib.Path(__file__).with_name("app_utils.py")
+        spec = importlib.util.spec_from_file_location("app_utils", mod_path)
+        utils = importlib.util.module_from_spec(spec)  # type: ignore
+        spec.loader.exec_module(utils)  # type: ignore
+
     logger = logging.getLogger(ct.LOGGER_NAME)
 
-    # すでにAgent Executorが作成済みの場合でも enc が無ければ保証してから return
+    # すでに作成済みならスキップ
     if "agent_executor" in st.session_state:
-        _ensure_enc()
         return
 
-    # まずトークナイザを保証
-    _ensure_enc()
+    # tiktoken の初期化（保険つき）
+    try:
+        st.session_state.enc = tiktoken.encoding_for_model(getattr(ct, "MODEL", "gpt-4o-mini"))
+    except Exception:
+        st.session_state.enc = tiktoken.get_encoding(getattr(ct, "ENCODING_KIND", "cl100k_base"))
 
-    # LLM 構築
+    # --- Chat LLM を Secrets のキーで明示作成 ---
     st.session_state.llm = ChatOpenAI(
         model=ct.MODEL,
         temperature=ct.TEMPERATURE,
-        streaming=True
+        streaming=True,
+        api_key=OPENAI_API_KEY,   # ★ 明示
+        timeout=60,
+        max_retries=0,            # 無駄な再試行で費用が跳ねないように
     )
+    logger.info(f"Using OpenAI key ****{OPENAI_API_KEY[-4:]} for Chat & Embeddings")
 
-    # 各Tool用のChainを作成（create_rag_chain 内で st.session_state.llm を参照）
+    # 各Tool用のChainを作成
     st.session_state.customer_doc_chain = utils.create_rag_chain(ct.DB_CUSTOMER_PATH)
     st.session_state.service_doc_chain  = utils.create_rag_chain(ct.DB_SERVICE_PATH)
     st.session_state.company_doc_chain  = utils.create_rag_chain(ct.DB_COMPANY_PATH)
@@ -213,31 +172,13 @@ def initialize_agent_executor():
     # Web検索用のTool
     search = SerpAPIWrapper()
 
-    # Agent Executorに渡すTool一覧
     tools = [
-        Tool(
-            name=ct.SEARCH_COMPANY_INFO_TOOL_NAME,
-            func=utils.run_company_doc_chain,
-            description=ct.SEARCH_COMPANY_INFO_TOOL_DESCRIPTION
-        ),
-        Tool(
-            name=ct.SEARCH_SERVICE_INFO_TOOL_NAME,
-            func=utils.run_service_doc_chain,
-            description=ct.SEARCH_SERVICE_INFO_TOOL_DESCRIPTION
-        ),
-        Tool(
-            name=ct.SEARCH_CUSTOMER_COMMUNICATION_INFO_TOOL_NAME,
-            func=utils.run_customer_doc_chain,
-            description=ct.SEARCH_CUSTOMER_COMMUNICATION_INFO_TOOL_DESCRIPTION
-        ),
-        Tool(
-            name=ct.SEARCH_WEB_INFO_TOOL_NAME,
-            func=search.run,
-            description=ct.SEARCH_WEB_INFO_TOOL_DESCRIPTION
-        ),
+        Tool(name=ct.SEARCH_COMPANY_INFO_TOOL_NAME,  func=utils.run_company_doc_chain,  description=ct.SEARCH_COMPANY_INFO_TOOL_DESCRIPTION),
+        Tool(name=ct.SEARCH_SERVICE_INFO_TOOL_NAME,  func=utils.run_service_doc_chain,   description=ct.SEARCH_SERVICE_INFO_TOOL_DESCRIPTION),
+        Tool(name=ct.SEARCH_CUSTOMER_COMMUNICATION_INFO_TOOL_NAME, func=utils.run_customer_doc_chain, description=ct.SEARCH_CUSTOMER_COMMUNICATION_INFO_TOOL_DESCRIPTION),
+        Tool(name=ct.SEARCH_WEB_INFO_TOOL_NAME,      func=search.run,                    description=ct.SEARCH_WEB_INFO_TOOL_DESCRIPTION),
     ]
 
-    # Agent Executorの作成
     st.session_state.agent_executor = initialize_agent(
         llm=st.session_state.llm,
         tools=tools,

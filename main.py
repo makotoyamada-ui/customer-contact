@@ -10,25 +10,25 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from dotenv import load_dotenv
 import logging
-import streamlit as st
+import traceback
 import importlib.util
 import pathlib
+import streamlit as st
 
 import constants as ct
 
+
+# ----------------------------------------------------------
 # utils のフォールバック読込（app_utils2 → app_utils → 最後にパス指定）
+# ----------------------------------------------------------
 def _import_utils():
-    try:
-        import app_utils2 as utils
-        return utils
-    except Exception:
-        pass
-    try:
-        import app_utils2 as utils
-        return utils
-    except Exception:
-        pass
-    # 最後の保険：app_utils.py をファイルパスから読み込む
+    # 1) 通常 import を順に試す
+    for modname in ("app_utils2", "app_utils"):
+        try:
+            return __import__(modname)
+        except Exception:
+            pass
+    # 2) 最後の保険：app_utils.py をファイルパスから読み込む
     mod_path = pathlib.Path(__file__).with_name("app_utils.py")
     spec = importlib.util.spec_from_file_location("app_utils", mod_path)
     utils = importlib.util.module_from_spec(spec)
@@ -56,7 +56,10 @@ logger = logging.getLogger(ct.LOGGER_NAME)
 try:
     initialize()
 except Exception as e:
-    logger.error(f"{ct.INITIALIZE_ERROR_MESSAGE}\n{e}")
+    # ★ 一時的に原因を画面に出す（デバッグが済んだらこの Expander を削除してOK）
+    logger.error(f"{ct.INITIALIZE_ERROR_MESSAGE}\n{e}\n{traceback.format_exc()}")
+    with st.expander("初期化エラーの詳細（一時表示）", expanded=True):
+        st.exception(e)
     st.error(utils.build_error_message(ct.INITIALIZE_ERROR_MESSAGE), icon=ct.ERROR_ICON)
     st.stop()
 
@@ -98,7 +101,10 @@ chat_message = st.chat_input(ct.CHAT_INPUT_HELPER_TEXT)
 try:
     cn.display_conversation_log(chat_message)
 except Exception as e:
-    logger.error(f"{ct.CONVERSATION_LOG_ERROR_MESSAGE}\n{e}")
+    logger.error(f"{ct.CONVERSATION_LOG_ERROR_MESSAGE}\n{e}\n{traceback.format_exc()}")
+    # ここは致命的なので UI にも表示
+    with st.expander("会話ログ表示エラーの詳細（一時表示）", expanded=True):
+        st.exception(e)
     st.error(utils.build_error_message(ct.CONVERSATION_LOG_ERROR_MESSAGE), icon=ct.ERROR_ICON)
     st.stop()
 
@@ -117,14 +123,14 @@ if chat_message:
         enc = tiktoken.encoding_for_model(model_name)
         input_tokens = len(enc.encode(chat_message))
     except Exception:
-        # tiktoken使用不可の場合は簡易計算
+        # tiktoken 使用不可の場合は簡易計算
         input_tokens = max(1, len(chat_message) // 2)
 
     # トークン数が、受付上限を超えている場合にエラーメッセージを表示
     if input_tokens > ct.MAX_ALLOWED_TOKENS:
         with st.chat_message("assistant", avatar=ct.AI_ICON_FILE_PATH):
             st.error(ct.INPUT_TEXT_LIMIT_ERROR_MESSAGE)
-            st.stop()
+        st.stop()
 
     # トークン数が受付上限を超えていない場合、会話ログ全体のトークン数に加算
     st.session_state.total_tokens += input_tokens
@@ -148,7 +154,10 @@ if chat_message:
             with st.spinner(ct.SPINNER_CONTACT_TEXT):
                 result = utils.notice_slack(chat_message)
     except Exception as e:
-        logger.error(f"{ct.MAIN_PROCESS_ERROR_MESSAGE}\n{e}")
+        # ★ ここが今回の「LLM encountered an error…」の本丸。詳細を出す。
+        logger.error(f"{ct.MAIN_PROCESS_ERROR_MESSAGE}\n{e}\n{traceback.format_exc()}")
+        with st.expander("処理エラーの詳細（一時表示）", expanded=True):
+            st.exception(e)
         st.error(utils.build_error_message(ct.MAIN_PROCESS_ERROR_MESSAGE), icon=ct.ERROR_ICON)
         st.stop()
 
@@ -158,8 +167,8 @@ if chat_message:
     try:
         utils.delete_old_conversation_log(result)
     except Exception as e:
-        # トークン削減に失敗しても致命傷にはしない（ログのみ）
-        logger.error(f"delete_old_conversation_log failed: {e}")
+        # トークン削減失敗は致命傷ではない（ログのみ）
+        logger.error(f"delete_old_conversation_log failed: {e}\n{traceback.format_exc()}")
 
     # ==========================================
     # 4. LLMからの回答表示
@@ -169,7 +178,9 @@ if chat_message:
             cn.display_llm_response(result)
             logger.info({"message": result})
         except Exception as e:
-            logger.error(f"{ct.DISP_ANSWER_ERROR_MESSAGE}\n{e}")
+            logger.error(f"{ct.DISP_ANSWER_ERROR_MESSAGE}\n{e}\n{traceback.format_exc()}")
+            with st.expander("回答表示エラーの詳細（一時表示）", expanded=True):
+                st.exception(e)
             st.error(utils.build_error_message(ct.DISP_ANSWER_ERROR_MESSAGE), icon=ct.ERROR_ICON)
             st.stop()
 

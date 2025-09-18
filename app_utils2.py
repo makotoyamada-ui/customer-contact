@@ -2,23 +2,14 @@
 このファイルは、画面表示以外の様々な関数定義のファイルです。
 """
 
-# --- SQLite を pysqlite3 に差し替え（Chroma を使う前に必ず走らせる）---
-try:
-    import sys
-    import pysqlite3 as sqlite3  # type: ignore  # noqa: F401
-    sys.modules["sqlite3"] = sqlite3
-except Exception:
-    pass
-# ---------------------------------------------------------------------------
-
-
 # =========================
 # 安全な constants ローダ
 # =========================
 import importlib, importlib.util, pathlib
 
 def _load_constants():
-    """constants を安全に読み込む（通常 import → 失敗時はファイル直指定でロード）"""
+    """constants を安全に読み込む（通常 import → 失敗時はファイル直指定でロード）」
+    """
     try:
         import constants as ct
         return ct
@@ -30,7 +21,6 @@ def _load_constants():
         return ct
 
 print("DEBUG: enter app_utils")  # 起動トレース
-
 
 # =========================
 # ライブラリの読み込み
@@ -62,12 +52,30 @@ from langchain.agents import AgentType, initialize_agent
 from sudachipy import tokenizer, dictionary
 from docx import Document
 
-
 # =========================
 # 設定関連
 # =========================
-load_dotenv()
+load_dotenv()  # 互換のため残す（ただし Secrets を優先）
 
+def _get_secret(name: str) -> str | None:
+    """Secrets > 環境変数 の優先で値を取得"""
+    try:
+        v = st.secrets.get(name)  # type: ignore[attr-defined]
+    except Exception:
+        v = None
+    return v or os.getenv(name)
+
+# --- OpenAI のキーは必ず明示して使う ---
+OPENAI_API_KEY = _get_secret("OPENAI_API_KEY")
+if not OPENAI_API_KEY:
+    raise RuntimeError(
+        "OPENAI_API_KEY is not設定されていません。Streamlit の Secrets か環境変数に設定してください。"
+    )
+
+# org / project の強制上書きは事故の元なので消しておく（任意）
+for var in ("OPENAI_ORG_ID", "OPENAI_ORGANIZATION", "OPENAI_PROJECT", "OPENAI_PROJECT_ID"):
+    if os.getenv(var):
+        del os.environ[var]
 
 # =========================
 # 関数定義
@@ -118,11 +126,20 @@ def create_rag_chain(db_name: str):
     )
     splitted_docs = text_splitter.split_documents(docs_all)
 
-    embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+    # --- Embeddings は Secrets のキーで明示作成 ---
+    embeddings = OpenAIEmbeddings(
+        model="text-embedding-3-small",
+        api_key=OPENAI_API_KEY,  # ★ 明示
+    )
 
-    # 既存DB読み込み or 新規作成（persist はプロジェクト直下の .db ディレクトリに統一）
-    persist_dir = ".db"
-    if os.path.isdir(persist_dir):
+    # 既存DB読み込み or 新規作成（永続ディレクトリは /mount/data に）
+    persist_dir = "/mount/data/chroma_db"
+    try:
+        os.makedirs(persist_dir, exist_ok=True)
+    except Exception:
+        pass
+
+    if os.path.isdir(persist_dir) and os.listdir(persist_dir):
         db = Chroma(persist_directory=persist_dir, embedding_function=embeddings)
     else:
         db = Chroma.from_documents(splitted_docs, embedding=embeddings, persist_directory=persist_dir)
@@ -166,8 +183,6 @@ def add_docs(folder_path: str, docs_all: list):
         return
 
     for file in os.listdir(folder_path):
-        if file.startswith("."):
-            continue
         ext = os.path.splitext(file)[1]
         if ext in ct.SUPPORTED_EXTENSIONS:
             loader = ct.SUPPORTED_EXTENSIONS[ext](os.path.join(folder_path, file))
@@ -176,7 +191,6 @@ def add_docs(folder_path: str, docs_all: list):
 
 def run_company_doc_chain(param: str) -> str:
     """会社に関するデータ参照に特化したTool用関数"""
-    ct = _load_constants()
     ai_msg = st.session_state.company_doc_chain.invoke(
         {"input": param, "chat_history": st.session_state.chat_history}
     )
@@ -188,7 +202,6 @@ def run_company_doc_chain(param: str) -> str:
 
 def run_service_doc_chain(param: str) -> str:
     """サービスに関するデータ参照に特化したTool用関数"""
-    ct = _load_constants()
     ai_msg = st.session_state.service_doc_chain.invoke(
         {"input": param, "chat_history": st.session_state.chat_history}
     )
@@ -200,7 +213,6 @@ def run_service_doc_chain(param: str) -> str:
 
 def run_customer_doc_chain(param: str) -> str:
     """顧客とのやり取りに関するデータ参照に特化したTool用関数"""
-    ct = _load_constants()
     ai_msg = st.session_state.customer_doc_chain.invoke(
         {"input": param, "chat_history": st.session_state.chat_history}
     )
@@ -213,39 +225,24 @@ def run_customer_doc_chain(param: str) -> str:
 def delete_old_conversation_log(result: str) -> None:
     """古い会話履歴の削除（トークン上限管理）"""
     ct = _load_constants()
-    enc = st.session_state.get("enc")
+    if "enc" not in st.session_state:
+        return
 
-    # 応答トークン加算
-    if enc is not None:
-        try:
-            response_tokens = len(enc.encode(str(result)))
-        except Exception:
-            response_tokens = max(1, len(str(result)) // 2)
-    else:
-        response_tokens = max(1, len(str(result)) // 2)
-        
+    response_tokens = len(st.session_state.enc.encode(result))
     st.session_state.total_tokens += response_tokens
 
-    # 上限超過なら古いメッセージから削除
     while (
         st.session_state.total_tokens > ct.MAX_ALLOWED_TOKENS
         and len(st.session_state.chat_history) > 1
     ):
         removed_message = st.session_state.chat_history.pop(1)
-        if enc is not None:
-            try:
-                removed_tokens = len(enc.encode(str(removed_message.content)))
-            except Exception:
-                removed_tokens = max(1, len(str(removed_message.content)) // 2)
-        else:
-            removed_tokens = max(1, len(str(removed_message.content)) // 2)
+        removed_tokens = len(st.session_state.enc.encode(removed_message.content))
         st.session_state.total_tokens -= removed_tokens
 
 
 def execute_agent_or_chain(chat_message: str) -> str:
     """AIエージェント or RAG Chain の実行"""
     ct = _load_constants()
-    logger = logging.getLogger(ct.LOGGER_NAME)
 
     if st.session_state.agent_mode == ct.AI_AGENT_MODE_ON:
         st_callback = StreamlitCallbackHandler(st.container())
@@ -271,95 +268,87 @@ def execute_agent_or_chain(chat_message: str) -> str:
 def notice_slack(chat_message: str) -> str:
     """問い合わせ内容のSlackへの通知"""
     ct = _load_constants()
-    
-    # SLACK_USER_TOKEN を SLACK_BOT_TOKEN として設定
-    user_token = os.getenv("SLACK_USER_TOKEN")
-    if user_token:
-        os.environ["SLACK_BOT_TOKEN"] = user_token
-    
-    try:
-        toolkit = SlackToolkit()
-        tools = toolkit.get_tools()
-        agent_executor = initialize_agent(
-            llm=st.session_state.llm,
-            tools=tools,
-            agent=AgentType.STRUCTURED_CHAT_ZERO_SHOT_REACT_DESCRIPTION,
-        )
 
-        # 従業員情報 / 問い合わせ履歴の読み込み
-        loader = CSVLoader(ct.EMPLOYEE_FILE_PATH, encoding=ct.CSV_ENCODING)
-        docs = loader.load()
-        loader = CSVLoader(ct.INQUIRY_HISTORY_FILE_PATH, encoding=ct.CSV_ENCODING)
-        docs_history = loader.load()
+    toolkit = SlackToolkit()
+    tools = toolkit.get_tools()
+    agent_executor = initialize_agent(
+        llm=st.session_state.llm,
+        tools=tools,
+        agent=AgentType.STRUCTURED_CHAT_ZERO_SHOT_REACT_DESCRIPTION,
+    )
 
-        # 文字列調整
-        for doc in docs:
-            doc.page_content = adjust_string(doc.page_content)
-            for key in list(doc.metadata.keys()):
-                doc.metadata[key] = adjust_string(doc.metadata[key])
-        for doc in docs_history:
-            doc.page_content = adjust_string(doc.page_content)
-            for key in list(doc.metadata.keys()):
-                doc.metadata[key] = adjust_string(doc.metadata[key])
+    # 従業員情報 / 問い合わせ履歴の読み込み
+    loader = CSVLoader(ct.EMPLOYEE_FILE_PATH, encoding=ct.CSV_ENCODING)
+    docs = loader.load()
+    loader = CSVLoader(ct.INQUIRY_HISTORY_FILE_PATH, encoding=ct.CSV_ENCODING)
+    docs_history = loader.load()
 
-        # データ整形
-        docs_all = adjust_reference_data(docs, docs_history)
-        docs_all_page_contents = [doc.page_content for doc in docs_all]
+    # 文字列調整
+    for doc in docs:
+        doc.page_content = adjust_string(doc.page_content)
+        for key in list(doc.metadata.keys()):
+            doc.metadata[key] = adjust_string(doc.metadata[key])
+    for doc in docs_history:
+        doc.page_content = adjust_string(doc.page_content)
+        for key in list(doc.metadata.keys()):
+            doc.metadata[key] = adjust_string(doc.metadata[key])
 
-        # Retriever 構築（Ensemble: BM25 + embeddings）
-        embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
-        db = Chroma.from_documents(docs_all, embedding=embeddings)
-        retriever_dense = db.as_retriever(search_kwargs={"k": ct.TOP_K})
-        retriever_bm25 = BM25Retriever.from_texts(
-            docs_all_page_contents, preprocess_func=preprocess_func, k=ct.TOP_K
-        )
-        retriever = EnsembleRetriever(
-            retrievers=[retriever_bm25, retriever_dense],
-            weights=ct.RETRIEVER_WEIGHTS,
-        )
+    # データ整形
+    docs_all = adjust_reference_data(docs, docs_history)
+    docs_all_page_contents = [doc.page_content for doc in docs_all]
 
-        employees = retriever.invoke(chat_message)
+    # Retriever 構築（Ensemble: BM25 + embeddings）
+    embeddings = OpenAIEmbeddings(
+        model="text-embedding-3-small",
+        api_key=OPENAI_API_KEY,   # ★ 明示
+    )
+    db = Chroma.from_documents(docs_all, embedding=embeddings, persist_directory="/mount/data/chroma_db_slack")
+    retriever_dense = db.as_retriever(search_kwargs={"k": ct.TOP_K})
+    retriever_bm25 = BM25Retriever.from_texts(
+        docs_all_page_contents, preprocess_func=preprocess_func, k=ct.TOP_K
+    )
+    retriever = EnsembleRetriever(
+        retrievers=[retriever_bm25, retriever_dense],
+        weights=ct.RETRIEVER_WEIGHTS,
+    )
 
-        # プロンプト作成
-        context = get_context(employees)
-        prompt_template = ChatPromptTemplate.from_messages(
-            [("system", ct.SYSTEM_PROMPT_EMPLOYEE_SELECTION)]
-        )
-        output_parser = CommaSeparatedListOutputParser()
-        format_instruction = output_parser.get_format_instructions()
+    employees = retriever.invoke(chat_message)
 
-        messages = prompt_template.format_prompt(
-            context=context, query=chat_message, format_instruction=format_instruction
-        ).to_messages()
+    # プロンプト作成
+    context = get_context(employees)
+    prompt_template = ChatPromptTemplate.from_messages(
+        [("system", ct.SYSTEM_PROMPT_EMPLOYEE_SELECTION)]
+    )
+    output_parser = CommaSeparatedListOutputParser()
+    format_instruction = output_parser.get_format_instructions()
 
-        employee_id_response = st.session_state.llm(messages)
-        employee_ids = output_parser.parse(employee_id_response.content)
+    messages = prompt_template.format_prompt(
+        context=context, query=chat_message, format_instruction=format_instruction
+    ).to_messages()
 
-        target_employees = get_target_employees(employees, employee_ids)
-        slack_ids = get_slack_ids(target_employees)
-        slack_id_text = create_slack_id_text(slack_ids)
+    employee_id_response = st.session_state.llm(messages)
+    employee_ids = output_parser.parse(employee_id_response.content)
 
-        context = get_context(target_employees)
-        now_datetime = get_datetime()
+    target_employees = get_target_employees(employees, employee_ids)
+    slack_ids = get_slack_ids(target_employees)
+    slack_id_text = create_slack_id_text(slack_ids)
 
-        prompt = PromptTemplate(
-            input_variables=["slack_id_text", "query", "context", "now_datetime"],
-            template=ct.SYSTEM_PROMPT_NOTICE_SLACK,
-        )
-        prompt_message = prompt.format(
-            slack_id_text=slack_id_text,
-            query=chat_message,
-            context=context,
-            now_datetime=now_datetime,
-        )
+    context = get_context(target_employees)
+    now_datetime = get_datetime()
 
-        agent_executor.invoke({"input": prompt_message})
-        return ct.CONTACT_THANKS_MESSAGE
-        
-    except Exception as e:
-        logger = logging.getLogger(ct.LOGGER_NAME)
-        logger.error(f"Slack notification failed: {e}")
-        return "Slack通知でエラーが発生しました。設定を確認してください。"
+    prompt = PromptTemplate(
+        input_variables=["slack_id_text", "query", "context", "now_datetime"],
+        template=ct.SYSTEM_PROMPT_NOTICE_SLACK,
+    )
+    prompt_message = prompt.format(
+        slack_id_text=slack_id_text,
+        query=chat_message,
+        context=context,
+        now_datetime=now_datetime,
+    )
+
+    agent_executor.invoke({"input": prompt_message})
+    return ct.CONTACT_THANKS_MESSAGE
 
 
 def adjust_reference_data(docs, docs_history):
