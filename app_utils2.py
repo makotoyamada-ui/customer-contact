@@ -290,10 +290,8 @@ def execute_agent_or_chain(chat_message: str) -> str:
 
     try:
         if st.session_state.agent_mode == ct.AI_AGENT_MODE_ON:
-            st_callback = StreamlitCallbackHandler(st.container())
-            result = st.session_state.agent_executor.invoke(
-                {"input": chat_message}, {"callbacks": [st_callback]}
-            )
+            # StreamlitCallbackHandler は別スレッドでコンテキスト外実行になりやすいため使用しない
+            result = st.session_state.agent_executor.invoke({"input": chat_message})
             response = result["output"]
         else:
             result = st.session_state.rag_chain.invoke(
