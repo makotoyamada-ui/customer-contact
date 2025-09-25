@@ -420,14 +420,18 @@ def notice_slack(chat_message: str) -> str:
     now_datetime = get_datetime()
 
     prompt = PromptTemplate(
-        input_variables=["slack_id_text", "query", "context", "now_datetime"],
+        input_variables=["slack_id_text", "query", "context", "now_datetime","mention_reason"],
         template=ct.SYSTEM_PROMPT_NOTICE_SLACK,
     )
+    # mention_reason が未定義だったため安全なデフォルトを設定   
+    mention_reason = "" if mention_reason is None else mention_reason
     prompt_message = prompt.format(
         slack_id_text=slack_id_text,
         query=chat_message,
         context=context,
         now_datetime=now_datetime,
+        mention_reason=mention_reason,
+        
     )
 
     agent_executor.invoke({"input": prompt_message})
