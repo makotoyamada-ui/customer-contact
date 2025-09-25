@@ -323,6 +323,7 @@ def execute_agent_or_chain(chat_message: str) -> str:
 def notice_slack(chat_message: str) -> str:
     """問い合わせ内容のSlackへの通知"""
     ct = _load_constants()
+    logger = logging.getLogger(ct.LOGGER_NAME)
 
     toolkit = SlackToolkit()
     tools = toolkit.get_tools()
@@ -416,12 +417,25 @@ def notice_slack(chat_message: str) -> str:
     slack_ids = get_slack_ids(target_employees)
     slack_id_text = create_slack_id_text(slack_ids)
 
+    # --- 固定送信先の上書き（Secrets/env に設定があれば優先） ---
+    fixed_user_ids = _get_secret("SLACK_FIXED_USER_IDS")  # 例: "U12345,U67890"
+    if fixed_user_ids:
+        ids = [x.strip() for x in fixed_user_ids.split(",") if x.strip()]
+        if ids:
+            slack_ids = ids
+            slack_id_text = create_slack_id_text(slack_ids)
+
+    fixed_channel = _get_secret("SLACK_FIXED_CHANNEL_NAME")  # 例: "動作検証用" or "alerts"
+    channel_name = fixed_channel if fixed_channel else "動作検証用"
+
     context = get_context(target_employees)
     now_datetime = get_datetime()
 
+    # テンプレート内のチャンネル名を上書き（簡易置換）
+    template_text = ct.SYSTEM_PROMPT_NOTICE_SLACK.replace("動作検証用", channel_name)
     prompt = PromptTemplate(
         input_variables=["slack_id_text", "query", "context", "now_datetime","mention_reason"],
-        template=ct.SYSTEM_PROMPT_NOTICE_SLACK,
+        template=template_text,
     )
     # mention_reason が未定義だったため安全なデフォルトを設定   
     mention_reason = "" if mention_reason is None else mention_reason
@@ -434,8 +448,12 @@ def notice_slack(chat_message: str) -> str:
         
     )
 
-    agent_executor.invoke({"input": prompt_message})
-    return ct.CONTACT_THANKS_MESSAGE
+    try:
+        agent_executor.invoke({"input": prompt_message})
+        return ct.CONTACT_THANKS_MESSAGE
+    except Exception as e:
+        logger.error({"slack_error": str(e)})
+        return build_error_message("Slack への通知でエラーが発生しました。時間をおいて再実行するか、管理者にお問い合わせください。")
 
 
 def adjust_reference_data(docs, docs_history):
