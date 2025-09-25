@@ -153,10 +153,11 @@ def initialize_agent_executor():
         st.session_state.enc = tiktoken.get_encoding(getattr(ct, "ENCODING_KIND", "cl100k_base"))
 
     # --- Chat LLM を Secrets のキーで明示作成 ---
+    # Streaming は別スレッドでのトークン受信により Streamlit のコンテキスト外コールバックを誘発するため無効化
     st.session_state.llm = ChatOpenAI(
         model=ct.MODEL,
         temperature=ct.TEMPERATURE,
-        streaming=True,
+        streaming=False,
         api_key=OPENAI_API_KEY,   # ★ 明示
         timeout=60,
         max_retries=0,            # 無駄な再試行で費用が跳ねないように
