@@ -117,6 +117,10 @@ SEARCH_CUSTOMER_COMMUNICATION_INFO_TOOL_NAME = "search_customer_communication_to
 SEARCH_CUSTOMER_COMMUNICATION_INFO_TOOL_DESCRIPTION = "顧客とのやりとりに関する情報を参照したい時に使う"
 SEARCH_WEB_INFO_TOOL_NAME = "search_web_tool"
 SEARCH_WEB_INFO_TOOL_DESCRIPTION = "自社サービス「HealthX」に関する質問で、Web検索が必要と判断した場合に使う"
+SEARCH_ALL_DOCS_TOOL_NAME = "search_all_docs_tool"
+SEARCH_ALL_DOCS_TOOL_DESCRIPTION = "社内ドキュメント（会社/サービス/顧客関連）を横断して検索し、根拠とともに回答する"
+SEARCH_INQUIRY_HISTORY_TOOL_NAME = "search_inquiry_history_tool"
+SEARCH_INQUIRY_HISTORY_TOOL_DESCRIPTION = "過去の問い合わせ履歴から、入力内容に近いケースや対応結果を検索する"
 
 
 # ==========================================
@@ -238,6 +242,9 @@ SYSTEM_PROMPT_NOTICE_SLACK = """
     ・日時: {now_datetime}
 
     --------------------
+    --------------------
+    【メンション先の選定理由】
+    ・{mention_reason}
 
     【回答・対応案】
     ＜1つ目＞
