@@ -268,26 +268,39 @@ def delete_old_conversation_log(result: str) -> None:
 def execute_agent_or_chain(chat_message: str) -> str:
     """AIエージェント or RAG Chain の実行"""
     ct = _load_constants()
+    logger = logging.getLogger(ct.LOGGER_NAME)
 
-    if st.session_state.agent_mode == ct.AI_AGENT_MODE_ON:
-        st_callback = StreamlitCallbackHandler(st.container())
-        result = st.session_state.agent_executor.invoke(
-            {"input": chat_message}, {"callbacks": [st_callback]}
-        )
-        response = result["output"]
-    else:
-        result = st.session_state.rag_chain.invoke(
-            {"input": chat_message, "chat_history": st.session_state.chat_history}
-        )
-        st.session_state.chat_history.extend(
-            [HumanMessage(content=chat_message), AIMessage(content=result["answer"])]
-        )
-        response = result["answer"]
+    try:
+        if st.session_state.agent_mode == ct.AI_AGENT_MODE_ON:
+            st_callback = StreamlitCallbackHandler(st.container())
+            result = st.session_state.agent_executor.invoke(
+                {"input": chat_message}, {"callbacks": [st_callback]}
+            )
+            response = result["output"]
+        else:
+            result = st.session_state.rag_chain.invoke(
+                {"input": chat_message, "chat_history": st.session_state.chat_history}
+            )
+            st.session_state.chat_history.extend(
+                [HumanMessage(content=chat_message), AIMessage(content=result["answer"])]
+            )
+            response = result["answer"]
 
-    if response != ct.NO_DOC_MATCH_MESSAGE:
-        st.session_state.answer_flg = True
+        if response != ct.NO_DOC_MATCH_MESSAGE:
+            st.session_state.answer_flg = True
+        return response
 
-    return response
+    except Exception as e:
+        err_text = str(e)
+        logger.error({"error": err_text})
+        rate_or_quota = ("insufficient_quota" in err_text) or ("RateLimitError" in err_text) or ("429" in err_text)
+        if rate_or_quota:
+            friendly = (
+                "OpenAI APIの利用上限に達している可能性があります。時間をおいて再実行するか、管理者に請求・上限の設定を確認してください。"
+            )
+            return build_error_message(friendly)
+        # 上記以外のエラーは一般エラーとして返却
+        return build_error_message("ユーザー入力に対しての処理に失敗しました。 このエラーが繰り返し発生する場合は、管理者にお問い合わせください。")
 
 
 def notice_slack(chat_message: str) -> str:
