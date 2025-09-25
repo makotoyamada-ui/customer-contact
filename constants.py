@@ -129,7 +129,8 @@ SEARCH_INQUIRY_HISTORY_TOOL_DESCRIPTION = "過去の問い合わせ履歴から�
 EMPLOYEE_FILE_PATH = "./data/slack/従業員情報.csv"
 INQUIRY_HISTORY_FILE_PATH = "./data/slack/問い合わせ対応履歴.csv"
 CSV_ENCODING = "utf-8-sig"
-
+# 追加：試行順（Windows由来を優先）
+CSV_TRY_ENCODINGS = ["cp932", "shift_jis", "utf-8-sig", "utf-8"]
 
 # ==========================================
 # プロンプトテンプレート
