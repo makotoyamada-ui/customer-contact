@@ -32,7 +32,7 @@ def display_sidebar():
         col1, col2 = st.columns([100, 1])
         with col1:
             st.session_state.agent_mode = st.selectbox(
-                label="",
+                label="AIエージェント機能の利用有無",
                 options=[ct.AI_AGENT_MODE_ON, ct.AI_AGENT_MODE_OFF],
                 label_visibility="collapsed"
             )
@@ -42,7 +42,7 @@ def display_sidebar():
         col1, col2 = st.columns([100, 1])
         with col1:
             st.session_state.contact_mode = st.selectbox(
-                label="",
+                label="問い合わせモード",
                 options=[ct.CONTACT_MODE_OFF, ct.CONTACT_MODE_ON],
                 label_visibility="collapsed"
             )
@@ -106,7 +106,7 @@ def display_after_feedback_message(index, chat_message):
         # フィードバックで「いいえ」が選択されたら、入力エリアを表示する
         if st.session_state.feedback_no_flg:
             st.caption(ct.FEEDBACK_NO_MESSAGE)
-            st.session_state.dissatisfied_reason = st.text_area("", label_visibility="collapsed")
+            st.session_state.dissatisfied_reason = st.text_area("不満足理由", label_visibility="collapsed")
             # 送信ボタンの表示
             if st.button(ct.FEEDBACK_BUTTON_LABEL):
                 # 回答への不満足理由をログファイルに出力
