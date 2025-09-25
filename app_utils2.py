@@ -128,49 +128,66 @@ def create_rag_chain(db_name: str):
     )
     splitted_docs = text_splitter.split_documents(docs_all)
 
-    # --- Embeddings は Secrets のキーで明示作成 ---
-    embeddings = OpenAIEmbeddings(
-        model="text-embedding-3-small",
-        api_key=OPENAI_API_KEY,  # ★ 明示
-    )
-
-    # 既存DB読み込み or 新規作成（永続ディレクトリ: 環境変数 > /tmp に退避）
-    persist_dir = os.getenv("CHROMA_PERSIST_DIR", "/tmp/chroma_db")
-    can_persist = False
+    # --- Embeddings / Chroma 初期化（429等はフェイルソフト） ---
+    logger = logging.getLogger(ct.LOGGER_NAME)
     try:
-        os.makedirs(persist_dir, exist_ok=True)
-        can_persist = os.access(persist_dir, os.W_OK)
-    except Exception:
+        embeddings = OpenAIEmbeddings(
+            model="text-embedding-3-small",
+            api_key=OPENAI_API_KEY,  # ★ 明示
+        )
+
+        # 既存DB読み込み or 新規作成（永続ディレクトリ: 環境変数 > /tmp に退避）
+        persist_dir = os.getenv("CHROMA_PERSIST_DIR", "/tmp/chroma_db")
         can_persist = False
+        try:
+            os.makedirs(persist_dir, exist_ok=True)
+            can_persist = os.access(persist_dir, os.W_OK)
+        except Exception:
+            can_persist = False
 
-    try:
-        if can_persist and os.path.isdir(persist_dir) and os.listdir(persist_dir):
-            db = Chroma(persist_directory=persist_dir, embedding_function=embeddings)
-        elif can_persist:
-            db = Chroma.from_documents(
-                splitted_docs,
-                embedding=embeddings,
-                persist_directory=persist_dir,
+        try:
+            if can_persist and os.path.isdir(persist_dir) and os.listdir(persist_dir):
+                db = Chroma(persist_directory=persist_dir, embedding_function=embeddings)
+            elif can_persist:
+                db = Chroma.from_documents(
+                    splitted_docs,
+                    embedding=embeddings,
+                    persist_directory=persist_dir,
+                )
+            else:
+                # 永続化不可な環境（例: 権限なし）の場合はメモリのみで生成
+                db = Chroma.from_documents(splitted_docs, embedding=embeddings)
+        except Exception:
+            # Chroma v0.5 系のテナント初期化失敗などに備え、クリーンな一時ディレクトリで再試行
+            fallback_dir = os.path.join(tempfile.gettempdir(), f"chroma_db_{uuid.uuid4().hex}")
+            try:
+                os.makedirs(fallback_dir, exist_ok=True)
+                db = Chroma.from_documents(
+                    splitted_docs,
+                    embedding=embeddings,
+                    persist_directory=fallback_dir,
+                )
+            except Exception:
+                # それでも失敗する場合はメモリのみ
+                db = Chroma.from_documents(splitted_docs, embedding=embeddings)
+
+        # retriever は必ず作る（Dense ベース）
+        retriever = db.as_retriever(search_kwargs={"k": ct.TOP_K})
+
+    except Exception as e:
+        # 429 / insufficient_quota など Embeddings での失敗時は、初期化で落ちないように
+        err_text = str(e)
+        if ("insufficient_quota" in err_text) or ("RateLimitError" in err_text) or ("429" in err_text):
+            logger.warning({"embeddings_fallback": err_text})
+
+            # API を使わない BM25 のみの簡易リトリーバへフォールバック
+            docs_all_page_contents = [doc.page_content for doc in splitted_docs]
+            retriever = BM25Retriever.from_texts(
+                docs_all_page_contents, preprocess_func=preprocess_func, k=ct.TOP_K
             )
         else:
-            # 永続化不可な環境（例: 権限なし）の場合はメモリのみで生成
-            db = Chroma.from_documents(splitted_docs, embedding=embeddings)
-    except Exception as e:
-        # Chroma v0.5 系のテナント初期化失敗などに備え、クリーンな一時ディレクトリで再試行
-        fallback_dir = os.path.join(tempfile.gettempdir(), f"chroma_db_{uuid.uuid4().hex}")
-        try:
-            os.makedirs(fallback_dir, exist_ok=True)
-            db = Chroma.from_documents(
-                splitted_docs,
-                embedding=embeddings,
-                persist_directory=fallback_dir,
-            )
-        except Exception:
-            # それでも失敗する場合はメモリのみ
-            db = Chroma.from_documents(splitted_docs, embedding=embeddings)
+            raise
 
-    # retriever は必ず作る
-    retriever = db.as_retriever(search_kwargs={"k": ct.TOP_K})
 
     # プロンプト
     question_generator_prompt = ChatPromptTemplate.from_messages(
