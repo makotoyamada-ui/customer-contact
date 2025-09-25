@@ -53,6 +53,7 @@ from langchain_community.agent_toolkits import SlackToolkit
 from langchain.agents import AgentType, initialize_agent
 from sudachipy import tokenizer, dictionary
 from docx import Document
+from pathlib import Path
 
 # =========================
 # 設定関連
@@ -333,11 +334,30 @@ def notice_slack(chat_message: str) -> str:
         agent=AgentType.STRUCTURED_CHAT_ZERO_SHOT_REACT_DESCRIPTION,
     )
 
-    # 従業員情報 / 問い合わせ履歴の読み込み
-    loader = CSVLoader(ct.EMPLOYEE_FILE_PATH, encoding=ct.CSV_ENCODING)
-    docs = loader.load()
-    loader = CSVLoader(ct.INQUIRY_HISTORY_FILE_PATH, encoding=ct.CSV_ENCODING)
-    docs_history = loader.load()
+    # 従業員情報 / 問い合わせ履歴の読み込み（ファイルパスは本ファイル相対で解決）
+    def resolve_path(rel_path: str) -> str:
+        p = Path(rel_path)
+        if p.is_file():
+            return str(p)
+        base = Path(__file__).parent
+        candidate = (base / rel_path).resolve()
+        return str(candidate)
+
+    try:
+        employee_csv = resolve_path(ct.EMPLOYEE_FILE_PATH)
+        history_csv = resolve_path(ct.INQUIRY_HISTORY_FILE_PATH)
+        if not Path(employee_csv).is_file():
+            raise FileNotFoundError(employee_csv)
+        if not Path(history_csv).is_file():
+            raise FileNotFoundError(history_csv)
+
+        loader = CSVLoader(employee_csv, encoding=ct.CSV_ENCODING)
+        docs = loader.load()
+        loader = CSVLoader(history_csv, encoding=ct.CSV_ENCODING)
+        docs_history = loader.load()
+    except Exception as e:
+        logger.error({"slack_csv_load_error": str(e)})
+        return build_error_message("Slack参照用のCSVファイルの読み込みに失敗しました。ファイルの場所と文字コードをご確認ください。")
 
     # 文字列調整
     for doc in docs:
